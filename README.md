@@ -4,6 +4,8 @@
 
 It runs for **Andalucía** or the **whole of Spain** (Peninsula, Balearic and Canary Islands, Ceuta and Melilla) with a single setting.
 
+![Vigía map showing satellite fire detections over Andalucía](docs/screenshot.png)
+
 > ⚠️ **Not an official emergency service.** Satellite detections arrive with a delay of several hours and include false positives (agricultural burns, industrial heat sources). In an emergency call **112**. Official information comes from each autonomous community's emergency service (in Andalucía, Plan INFOCA).
 
 ## Why

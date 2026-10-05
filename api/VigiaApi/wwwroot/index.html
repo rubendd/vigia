@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vigía · Focos de incendio por satélite</title>
+  <meta name="description" content="Mapa de focos activos de incendio detectados por satélite en España, con datos abiertos de NASA FIRMS.">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    :root {
+      --bg: #f6f4f1; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #e4e0da;
+      --accent: #c2410c; --high: #b91c1c; --nominal: #ea580c; --low: #ca8a04;
+      --warn-bg: #fff4e5; --warn-text: #7a3e00;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #141416; --panel: #1e1e21; --text: #ececee; --muted: #a0a0a8; --line: #2e2e33;
+        --accent: #fb923c; --warn-bg: #3a2610; --warn-text: #fcd9a8;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text);
+           display: grid; grid-template-rows: auto auto 1fr; }
+    header { display: flex; align-items: baseline; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    header h1 { margin: 0; font-size: 18px; }
+    header h1 span { color: var(--accent); }
+    header p { margin: 0; color: var(--muted); font-size: 13px; }
+    .notice { background: var(--warn-bg); color: var(--warn-text); padding: 8px 16px; font-size: 13px; line-height: 1.4; }
+    .notice a { color: inherit; font-weight: 600; }
+    main { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
+    aside { background: var(--panel); border-right: 1px solid var(--line); padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+    label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .04em; }
+    select { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 14px; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .stat { background: var(--bg); border-radius: 10px; padding: 10px; }
+    .stat b { display: block; font-size: 22px; }
+    .stat small { color: var(--muted); font-size: 12px; }
+    .meta { font-size: 12px; color: var(--muted); line-height: 1.5; }
+    .provinces { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+    .provinces li { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+    .provinces li:hover { color: var(--accent); }
+    .legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+    #map { min-height: 0; }
+    .error { color: var(--high); font-size: 13px; }
+    @media (max-width: 760px) {
+      main { grid-template-columns: 1fr; grid-template-rows: auto 60vh; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+      header { flex-direction: column; gap: 2px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Vigía <span id="region-name"></span></h1>
+    <p>Focos activos de incendio detectados por satélite</p>
+  </header>
+
+  <div class="notice" role="note">
+    <strong>No es un servicio oficial de emergencias.</strong>
+    Si ves un incendio, llama al <a href="tel:112">112</a>. Información oficial: el servicio de emergencias de tu comunidad autónoma (en Andalucía, el Plan INFOCA).
+    Los datos de satélite llegan con horas de retraso y pueden incluir falsos positivos (quemas agrícolas, industrias).
+  </div>
+
+  <main>
+    <aside>
+      <div>
+        <label for="hours">Periodo</label>
+        <select id="hours">
+          <option value="6">Últimas 6 horas</option>
+          <option value="24" selected>Últimas 24 horas</option>
+          <option value="48">Últimas 48 horas</option>
+          <option value="72">Últimos 3 días</option>
+          <option value="168">Última semana</option>
+        </select>
+      </div>
+      <div>
+        <label for="province">Provincia</label>
+        <select id="province"><option value="" id="province-all">Toda la región</option></select>
+      </div>
+      <div>
+        <label for="confidence">Confianza mínima</label>
+        <select id="confidence">
+          <option value="low">Todas</option>
+          <option value="nominal" selected>Media y alta</option>
+          <option value="high">Solo alta</option>
+        </select>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><b id="stat-total">–</b><small>focos en el periodo</small></div>
+        <div class="stat"><b id="stat-high">–</b><small>confianza alta</small></div>
+      </div>
+      <div class="meta" id="meta"></div>
+      <div class="error" id="error" hidden></div>
+
+      <div>
+        <label>Por provincia</label>
+        <ul class="provinces" id="provinces"></ul>
+      </div>
+
+      <div class="legend">
+        <span><i class="dot" style="background:var(--high)"></i>Alta</span>
+        <span><i class="dot" style="background:var(--nominal)"></i>Media</span>
+        <span><i class="dot" style="background:var(--low)"></i>Baja</span>
+      </div>
+      <div class="meta">Datos: NASA FIRMS (VIIRS). Tamaño del punto según potencia radiativa (FRP).</div>
+    </aside>
+
+    <div id="map" aria-label="Mapa de focos de incendio"></div>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const COLORS = { high: "#b91c1c", nominal: "#ea580c", low: "#ca8a04" };
+    const LABELS = { high: "Alta", nominal: "Media", low: "Baja" };
+    const REFRESH_MS = 5 * 60 * 1000;
+
+    const $ = (id) => document.getElementById(id);
+    const fmt = new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Madrid" });
+
+    let regionBounds = [[35.9, -9.5], [43.9, 4.5]];  // replaced by /api/config on load
+    const map = L.map("map", { zoomControl: true }).fitBounds(regionBounds);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 18,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · Focos: NASA FIRMS'
+    }).addTo(map);
+    const layer = L.layerGroup().addTo(map);
+
+    async function loadConfig() {
+      try {
+        const config = await getJson("/api/config");
+        regionBounds = config.bounds;
+        map.fitBounds(regionBounds);
+        $("region-name").textContent = config.name;
+        $("province-all").textContent = `Toda ${config.name}`;
+        document.title = `Vigía ${config.name} · Focos de incendio por satélite`;
+      } catch {
+        // Keep the defaults; refresh() will surface connectivity problems.
+      }
+    }
+
+    // Provinces come from the loaded boundaries, so the selector works for any region.
+    function syncProvinceOptions(counts) {
+      const select = $("province");
+      const current = select.value;
+      const names = counts.map((c) => c.province).sort((a, b) => a.localeCompare(b, "es"));
+      const existing = [...select.options].slice(1).map((o) => o.value);
+      if (names.join("|") === existing.join("|")) return;
+      select.length = 1;
+      names.forEach((n) => select.add(new Option(n, n)));
+      select.value = names.includes(current) ? current : "";
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    function radiusFor(frp) {
+      if (!frp || frp <= 0) return 5;
+      return Math.min(5 + Math.sqrt(frp) * 1.5, 18);
+    }
+
+    function popupFor(p) {
+      const place = p.municipality ? `${escapeHtml(p.municipality)} (${escapeHtml(p.province)})` : "Municipio sin asignar";
+      return `<strong>${place}</strong><br>
+        Detectado: ${escapeHtml(fmt.format(new Date(p.acquiredAt)))}<br>
+        Confianza: ${escapeHtml(LABELS[p.confidence] || p.confidence)}<br>
+        Potencia (FRP): ${p.frp != null ? escapeHtml(p.frp.toFixed(1)) + " MW" : "n/d"}<br>
+        Satélite: ${escapeHtml(p.source)}${p.daynight === "N" ? " · noche" : ""}`;
+    }
+
+    async function getJson(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res.json();
+    }
+
+    async function refresh() {
+      const hours = $("hours").value;
+      const province = $("province").value;
+      const confidence = $("confidence").value;
+      const params = new URLSearchParams({ hours, minConfidence: confidence });
+      if (province) params.set("province", province);
+
+      try {
+        const [geo, stats, counts] = await Promise.all([
+          getJson(`/api/hotspots?${params}`),
+          getJson(`/api/stats?${params}`),
+          getJson(`/api/provinces?hours=${hours}&minConfidence=${confidence}`)
+        ]);
+        $("error").hidden = true;
+
+        layer.clearLayers();
+        const points = [];
+        for (const f of geo.features) {
+          const [lon, lat] = f.geometry.coordinates;
+          const p = f.properties;
+          points.push([lat, lon]);
+          L.circleMarker([lat, lon], {
+            radius: radiusFor(p.frp), color: COLORS[p.confidence] || COLORS.low,
+            fillColor: COLORS[p.confidence] || COLORS.low, fillOpacity: 0.7, weight: 1
+          }).bindPopup(popupFor(p)).addTo(layer);
+        }
+        if (province && points.length) map.fitBounds(points, { maxZoom: 10, padding: [30, 30] });
+
+        $("stat-total").textContent = stats.total;
+        $("stat-high").textContent = stats.high;
+        $("meta").innerHTML = [
+          stats.latestDetection ? `Última detección: ${escapeHtml(fmt.format(new Date(stats.latestDetection)))}` : "Sin detecciones en el periodo",
+          stats.lastIngest ? `Actualizado: ${escapeHtml(fmt.format(new Date(stats.lastIngest)))}` : ""
+        ].filter(Boolean).join("<br>");
+
+        syncProvinceOptions(counts);
+        $("provinces").innerHTML = counts.length
+          ? counts
+              .map((c) => `<li data-province="${escapeHtml(c.province)}"><span>${escapeHtml(c.province)}</span><b>${c.hotspots}</b></li>`)
+              .join("")
+          : `<li class="meta">Carga los límites municipales para ver los focos por provincia.</li>`;
+      } catch (err) {
+        $("error").textContent = `No se pudieron cargar los datos (${err.message}).`;
+        $("error").hidden = false;
+      }
+    }
+
+    $("provinces").addEventListener("click", (e) => {
+      const li = e.target.closest("li[data-province]");
+      if (!li) return;
+      $("province").value = li.dataset.province;
+      refresh();
+    });
+    ["hours", "province", "confidence"].forEach((id) => $(id).addEventListener("change", () => {
+      if (id === "province" && !$("province").value) map.fitBounds(regionBounds);
+      refresh();
+    }));
+
+    loadConfig().then(refresh);
+    setInterval(refresh, REFRESH_MS);
+  </script>
+</body>
+</html>
